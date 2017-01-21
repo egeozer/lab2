@@ -7,21 +7,25 @@ package ev3Odometer;
 import lejos.hardware.motor.EV3LargeRegulatedMotor;
 
 public class Odometer extends Thread {
+	
+	// Class Variables
+	public static int lastTachoL;			// Tacho L at last sample
+	public static int lastTachoR;			// Tacho R at last sample 
+	public static int nowTachoL;			// Current tacho L
+	public static int nowTachoR;			// Current tacho R
+	public static final double WB=13.37;		// Wheelbase (cm)
+	public static final double WR=2.1;		// Wheel radius (cm)
+		
 	// robot position
 	private double x, y, theta;
 	private int leftMotorTachoCount, rightMotorTachoCount;
 	private EV3LargeRegulatedMotor leftMotor, rightMotor;
+	
 	// odometer update period, in ms
 	private static final long ODOMETER_PERIOD = 25;
 
 	// lock object for mutual exclusion
 	private Object lock;
-	
-	
-	// private variables for odometry measurement
-	private double WR, WB;
-	private double distance, angle;		//distance in cm, angle in radians
-	private double prevDistance, prevAngle;
 
 	// default constructor
 	public Odometer(EV3LargeRegulatedMotor leftMotor,EV3LargeRegulatedMotor rightMotor) {
@@ -42,21 +46,16 @@ public class Odometer extends Thread {
 		while (true) {
 			updateStart = System.currentTimeMillis();
 			//TODO put (some of) your odometer code here
-			//get tachometer values
-			leftMotorTachoCount = leftMotor.getTachoCount();
-			rightMotorTachoCount = rightMotor.getTachoCount();
+			double distL, distR, deltaD, deltaT, dX, dY;
+			nowTachoL = leftMotor.getTachoCount();      		// get tacho counts
+			nowTachoR = rightMotor.getTachoCount();
+			distL = 3.14159*WR*(nowTachoL-lastTachoL)/180;		// compute L and R wheel displacements
+			distR = 3.14159*WR*(nowTachoR-lastTachoR)/180;
+			lastTachoL=nowTachoL;								// save tacho counts for next iteration
+			lastTachoR=nowTachoR;
+			deltaD = 0.5*(distL+distR);							// compute vehicle displacement
+			deltaT = (distL-distR)/WB;							// compute change in heading
 			
-			//calculate distance and heading
-			distance = WR * Math.PI / 360 * ( leftMotorTachoCount + rightMotorTachoCount);
-			angle = WR / WB * Math.PI / 180 * ( leftMotorTachoCount - rightMotorTachoCount);
-			
-			distance -= prevDistance;
-			angle -= prevAngle;
-			
-			//update previous values
-			prevDistance += distance;
-			prevAngle += angle;
-
 			synchronized (lock) {
 				/**
 				 * Don't use the variables x, y, or theta anywhere but here!
@@ -64,14 +63,12 @@ public class Odometer extends Thread {
 				 * Do not perform complex math
 				 * 
 				 */
-				//Set variables theta = -0.7376; //TODO replace example value
-				
-				theta += angle;
-				if(theta < 0)
-					theta = Math.abs(theta);
-
-				x += distance * Math.cos(theta);
-				y += distance * Math.sin(theta);
+				//theta = -0.7376; //TODO replace example value
+				theta += deltaT;									// update heading
+			    dX = deltaD * Math.sin(theta);						// compute X component of displacement
+				dY = deltaD * Math.cos(theta);						// compute Y component of displacement
+				x = x + dX;											// update estimates of X and Y position
+				y = y + dY;	
 			}
 
 			// this ensures that the odometer only runs once every period
