@@ -1,8 +1,5 @@
-/*
- * OdometryDisplay.java
- */
+package odometry;
 
-package ev3Odometer;
 
 import lejos.hardware.lcd.TextLCD;
 
@@ -10,10 +7,12 @@ public class OdometryDisplay extends Thread {
 	private static final long DISPLAY_PERIOD = 250;
 	private Odometer odometer;
 	private TextLCD t;
+	private OdometryCorrection odometerCorrection;
 
 	// constructor
-	public OdometryDisplay(Odometer odometer, TextLCD t) {
+	public OdometryDisplay(Odometer odometer, OdometryCorrection odometerCorrection, TextLCD t) {
 		this.odometer = odometer;
+		this.odometerCorrection = odometerCorrection;
 		this.t = t;
 	}
 
@@ -32,15 +31,17 @@ public class OdometryDisplay extends Thread {
 			t.drawString("X:              ", 0, 0);
 			t.drawString("Y:              ", 0, 1);
 			t.drawString("T:              ", 0, 2);
-
+			t.drawString("C:              ", 0, 3);
 			// get the odometry information
 			odometer.getPosition(position, new boolean[] { true, true, true });
-
+			
 			// display odometry information
 			for (int i = 0; i < 3; i++) {
 				t.drawString(formattedDoubleToString(position[i], 2), 3, i);
 			}
-
+			//displays the brightness being read
+			t.drawString(formattedDoubleToString(odometerCorrection.getBrightness(),2),3, 3);
+			
 			// throttle the OdometryDisplay
 			displayEnd = System.currentTimeMillis();
 			if (displayEnd - displayStart < DISPLAY_PERIOD) {

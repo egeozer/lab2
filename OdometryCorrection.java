@@ -1,88 +1,85 @@
+package odometry;
+
+
+import lejos.hardware.sensor.EV3ColorSensor;
+
 /* 
  * OdometryCorrection.java
  */
-package ev3Odometer;
-
-import java.util.Arrays;
-
-import lejos.hardware.Sound;
-import lejos.hardware.ev3.LocalEV3;
-import lejos.hardware.lcd.LCD;
-import lejos.hardware.sensor.EV3ColorSensor;
-import lejos.robotics.SampleProvider;
-
 public class OdometryCorrection extends Thread {
-	private static final long CORRECTION_PERIOD = 10;
-	private EV3ColorSensor sensor = new EV3ColorSensor(LocalEV3.get().getPort("S1"));
-	private SampleProvider sampleProvider;
-	private Odometer odometer;
 	
-	private int[] distances = { 14, 44, 74 }; // { 12, 42, 72 }
-	private int squaresLeft = 0;
-	private int squaresTop = 0;
-	private int squaresRight = 2;
-	private int squaresBot = 2;
-	private double theta = 0.0;
-
+	//variables
+	private static final long CORRECTION_PERIOD = 10;
+	//distance from the sensor to the centre of rotation
+	private static final double SENSORDIST = 4.5;
+	//the minimum value of RGB that could be called white.
+	private static final double MINIMUMWHITEVALUE = 0.20; 
+	private Odometer odometer;
+	private EV3ColorSensor colorSensor;
+	//first and current brightnesses.
+	private double firstBrightnessLevel;
+	private double currBrightnessLevel;
+	//the percent difference in our reading to consider it a different color (used for reading black)
+	private double significantPercentThreshold = 20;
+	//array to store the measured RGB values
+	private float[] RGBValues = new float[3];
+	private boolean reachedBlackLine = false;
+	//variables to see if it is the first X or Y correction. It always starts in same first square (-15,-15)-->(15,15)
+	private boolean isFirstXCorrection = true;
+	private boolean isFirstYCorrection = true;
+	
 	// constructor
-	public OdometryCorrection(Odometer odometer) {
+	public OdometryCorrection(Odometer odometer, EV3ColorSensor colorSense) {
 		this.odometer = odometer;
-		sensor.setFloodlight(true);
+		colorSensor = colorSense;
 	}
 
 	// run method (required for Thread)
 	public void run() {
 		long correctionStart, correctionEnd;
-
 		
-		//define int for size of data array based on sensor sample size
-		int dataSize = sensor.sampleSize();
-		Sound.setVolume(50);
-				
+		firstBrightnessLevel = -1; //start the first brightness at -1 (to know it is first reading)
+		colorSensor.setFloodlight(lejos.robotics.Color.WHITE); //we set our light to White (we use white over R)
 		while (true) {
 			correctionStart = System.currentTimeMillis();
-
-			// TODO: put your correction code here
 			
-			sampleProvider=sensor.getRedMode();
-			//create array to store sensor data then retrieve data
-			float sensorData[] = new float[dataSize];
+			//gets the RGB data we measure
+			colorSensor.getRGBMode().fetchSample(RGBValues, 0); 
+			//we define the brightness as the average of the magnitudes of R,G,B (really "Whiteness")
+			currBrightnessLevel = (RGBValues[0] + RGBValues[1] + RGBValues[2]);
 			
-			sampleProvider.fetchSample(sensorData, 0);
-			
-			LCD.drawString("Color: " + Arrays.toString(sensorData), 0, 3);
-			
-			if(sensorData[0] < .3 ) {
-				
-				Sound.beep();
-				theta = odometer.getTheta();
-				
-				//left part of square
-				if(theta < 1.5) {
-					LCD.drawString("1", 0, 5);
-					odometer.setY(distances[squaresLeft]);
-					squaresLeft++;	
-				}	
-				//top part of square
-				else if ((theta >= 1.5 && theta < 3)) {
-					LCD.drawString("2", 0, 5);
-					odometer.setX(distances[squaresTop]);
-					squaresTop++;
+			/*
+			 * If it is our first brightness level, we just set it to our measured
+			 * Else, it is not our FIRST measurement, so we check to see if we hit a black line. 
+			 */
+			if (firstBrightnessLevel == -1){
+				firstBrightnessLevel = currBrightnessLevel;
+			}else{ 
+				/*
+				 * We have two conditions for a black line. First, if it is below an absolute amount.
+				 * Second, if the percent difference between our first measurement and now is greater
+				 * than a set threshold.
+				 */
+				if (currBrightnessLevel < MINIMUMWHITEVALUE) {
+					reachedBlackLine = true;
+				}else if(100*Math.abs(currBrightnessLevel - firstBrightnessLevel)/firstBrightnessLevel > significantPercentThreshold){
+					//we have a significant change
+					if(currBrightnessLevel < firstBrightnessLevel){
+						//we've reached a black line!!!
+						reachedBlackLine = true;
+					}
+				}else{
+					reachedBlackLine = false;
 				}
-				//right part of square
-				else if ((theta >= 3 && theta < 4.5)) {
-					LCD.drawString("3", 0, 5);
-					odometer.setY(distances[squaresRight]);
-					squaresRight--;
-				}	
-				//bottom part of square
-				else if ((theta >= 4.5 && theta < 6.2)) {
-					LCD.drawString("4" , 0, 5);
-					odometer.setX(distances[squaresBot]);
-					squaresBot--;
+				
+				//if we've reached a black line, correct the position of the robot.
+				if(reachedBlackLine == true){
+					correctOdometerPosition();
 				}
 			}
 
+			
+			
 			// this ensure the odometry correction occurs only once every period
 			correctionEnd = System.currentTimeMillis();
 			if (correctionEnd - correctionStart < CORRECTION_PERIOD) {
@@ -96,5 +93,141 @@ public class OdometryCorrection extends Thread {
 				}
 			}
 		}
+	}
+	/*
+	 * Corrects the odometer's position (is triggered on hitting a black line).
+	 */
+	private void correctOdometerPosition(){
+		//variables
+		double currX = odometer.getX();
+		double currY = odometer.getY();
+		int currT = (int) odometer.getTheta();
+		double correctedX = 0;
+		double correctedY = 0;
+		
+		//we find the nearest right theta (call it 0 (0,180,360) or 90 (90,270)) to see whether
+		//we're moving in X or Y.
+		int robotDirection = findRightAngleRobotDirection(currT);
+		
+		/*
+		 * If our direction is 0 (or 180,360), we're moving in X, correct X.
+		 * If our direction is 90 (or 270), we're moving in Y, correct Y.
+		 */
+		if(robotDirection == 0){ 
+			//get corrected X
+			correctedX = findCorrectedX(currX);
+			correctedY = currY;
+			//subtract or add the sensor distance to the corrected value (depending on how we're moving)
+			if (currX < correctedX){
+				correctedX -= SENSORDIST;
+			}else{
+				correctedX += SENSORDIST;
+			}
+			
+		}else if(robotDirection == 90){ 
+			//get corrected Y
+			correctedY = findCorrectedY(currY);
+			correctedX = currX;
+			//subtract or add the sensor distance to the corrected value (depending on how we're moving)
+			if (currY < correctedY){
+				correctedY -= SENSORDIST;
+			}else{
+				correctedY += SENSORDIST;
+			}
+		}
+		//create an array for the position of our robot and set the values
+		double[] position = new double[3];
+		position[0] = correctedX;
+		position[1] = correctedY;
+		position[2] = 0;
+		//create an array for what fields to update for our robot and set values
+		boolean[] update = new boolean[3];
+		update[0] = true;
+		update[1] = true;
+		update[2] = false;
+		//now use those two arrays to set the position of the odometer (it is now corrected).
+		odometer.setPosition(position,update);
+		
+	}
+	/*
+	 * Finds the "corrected" X value, assuming (0,0) is in the middle of the first square,
+	 * and blocks are 30x30. 
+	 */
+	private double findCorrectedX(double x){
+		double result = x;
+		/*
+		 * if it's the first correction, we know that X should be 15. otherwise find the nearest line value
+		 * to where we are. If none are close enough, keep it the same (false reading).
+		 */
+		if(isFirstXCorrection){
+			result = 15;
+			isFirstXCorrection = false;
+		}else{
+			for(int i = 0; i < 4; i++){
+				if(Math.abs(x - (15-SENSORDIST + 30*i)) < 12){
+					result = 15 + 30*i;
+					break;
+				}
+			}	
+		}
+		return result;
+	}
+	/*
+	 * Finds the "corrected" Y value, assuming (0,0) is in the middle of the first square,
+	 * and blocks are 30x30.
+	 */
+	private double findCorrectedY(double y){
+		double result = y;
+		/*
+		 * if it's the first correction, we know that Y should be -15. otherwise find the nearest line value
+		 * to where we are. If none are close enough, keep it the same (false reading).
+		 */
+		if(isFirstYCorrection){
+			result = -15;
+			isFirstYCorrection = false;
+		}else{
+			for(int i = 0; i < 4; i++){
+				if(Math.abs(y + (15-SENSORDIST + 30*i)) < 12){
+					result = (-1)*(15 + 30*i);
+					break;
+				}
+			}
+		}
+		return result;
+	}
+	/*
+	 * Finds the nearest right angle (0,90,180,270,etc) to the robots direction
+	 * to determine if we are moving in the X or the Y. We call X 0 and Y 90.
+	 */
+	private int findRightAngleRobotDirection(int t){
+		int result = 0;
+		int allowedError = 5;
+		/*
+		 * checks to see if we are in the allowed range for any of the right angles.
+		 */
+		if (Math.abs(t) < allowedError || Math.abs(t-360) < allowedError || Math.abs(t+360) < allowedError || Math.abs(t-180) < allowedError || Math.abs(t+180) < allowedError){
+			result = 0;
+		}else if (Math.abs(t-90) < allowedError || Math.abs(t+90) < allowedError || Math.abs(t-270) < allowedError || Math.abs(t+270) < allowedError){
+			result = 90;
+		}
+		
+		return result;
+	}
+	
+	//accessors used for displaying text on LCD.
+	public boolean isReadingBlack(){
+		return reachedBlackLine;
+	}
+	public double getR(){
+		return RGBValues[0];
+	}
+	public double getG(){
+		return RGBValues[1];
+	}
+	public double getB(){
+		return RGBValues[2];
+	}
+	public double getBrightness(){
+		return currBrightnessLevel;
 	}
 }

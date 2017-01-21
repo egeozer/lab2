@@ -1,13 +1,12 @@
+package odometry;
 // Lab2.java
-
-package ev3Odometer;
 
 import lejos.hardware.Button;
 import lejos.hardware.ev3.LocalEV3;
 import lejos.hardware.lcd.TextLCD;
 import lejos.hardware.motor.EV3LargeRegulatedMotor;
-//import lejos.hardware.port.MotorPort;
-//import lejos.hardware.port.Port;
+import lejos.hardware.sensor.EV3ColorSensor;
+
 
 public class Lab2 {
 	
@@ -16,10 +15,12 @@ public class Lab2 {
 	// Right motor connected to output D
 	private static final EV3LargeRegulatedMotor leftMotor = new EV3LargeRegulatedMotor(LocalEV3.get().getPort("A"));
 	private static final EV3LargeRegulatedMotor rightMotor = new EV3LargeRegulatedMotor(LocalEV3.get().getPort("D"));
-
-	// Constants
+	//private static final EV3ColorSensor colorSensor = new EV3ColorSensor(LocalEV3.get().getPort("B"));
+	private static final EV3ColorSensor colorSensor = new EV3ColorSensor(LocalEV3.get().getPort("1"));
+	
+	//Constants
 	public static final double WHEEL_RADIUS = 2.1;
-	public static final double TRACK = 11.45;  //  (10.3cm + 12cm)/2 = 11.15cm or 11.5cm from direct measurement //15.8 orig
+	public static final double TRACK = 16.27;
 
 	public static void main(String[] args) {
 		int buttonChoice;
@@ -27,10 +28,11 @@ public class Lab2 {
 		// some objects that need to be instantiated
 		
 		final TextLCD t = LocalEV3.get().getTextLCD();
-		Odometer odometer = new Odometer(leftMotor, rightMotor);
-		OdometryDisplay odometryDisplay = new OdometryDisplay(odometer,t);
-		OdometryCorrection odometryCorrection = new OdometryCorrection(odometer);
+		Odometer odometer = new Odometer(WHEEL_RADIUS, TRACK, leftMotor, rightMotor);
+		OdometryCorrection odometryCorrection = new OdometryCorrection(odometer, colorSensor);
+		OdometryDisplay odometryDisplay = new OdometryDisplay(odometer,odometryCorrection,t);
 
+		
 		do {
 			// clear the display
 			t.clear();
@@ -63,7 +65,7 @@ public class Lab2 {
 			odometer.start();
 			odometryDisplay.start();
 			odometryCorrection.start();
-
+			
 			// spawn a new Thread to avoid SquareDriver.drive() from blocking
 			(new Thread() {
 				public void run() {
